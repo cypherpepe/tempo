@@ -32,33 +32,6 @@ impl MalachiteNode {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct MalachiteBuiltPayload {
-    /// The built block
-    pub(crate) block: Arc<SealedBlock<RethBlock>>,
-    /// The fees of the block
-    pub(crate) fees: U256,
-    /// The requests of the payload
-    pub(crate) requests: Option<Requests>,
-}
-
-// TODO: Do we need a custom MalachitePayload?
-// impl BuiltPayload for MalachiteBuiltPayload {
-//     type Primitives = MalachitePrimitives;
-
-//     fn block(&self) -> &SealedBlock<MalachiteBlock> {
-//         self.block.as_ref()
-//     }
-
-//     fn fees(&self) -> U256 {
-//         self.fees
-//     }
-
-//     fn requests(&self) -> Option<Requests> {
-//         self.requests.clone()
-//     }
-// }
-
 #[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
 pub struct MalachitePayloadServiceBuilder;

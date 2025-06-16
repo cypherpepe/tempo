@@ -1,9 +1,14 @@
 use malachite_core_types::Round;
+
+use reth_ethereum_engine_primitives::EthPayloadTypes;
+
 use rand::SeedableRng;
 use rand::rngs::StdRng;
+use reth::payload::{PayloadBuilderHandle, PayloadServiceCommand};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use tokio::sync::mpsc;
 
 use crate::context::MalachiteContext;
 use crate::height::Height;
@@ -27,10 +32,16 @@ pub struct State {
     signing_provider: Ed25519Provider,
     streams_map: PartStreamsMap,
     rng: StdRng,
+
+
+    // Handle to the payload builder service
+    engine_handle: PayloadBuilderHandle<EthPayloadTypes>,
 }
 
 impl State {
     pub fn new(ctx: MalachiteContext, config: Config, genesis: Genesis, address: Address) -> Self {
+        let (tx, _rx) = mpsc::unbounded_channel();
+
         Self {
             ctx,
             config,
@@ -45,6 +56,7 @@ impl State {
             signing_provider: Ed25519Provider::new(),
             streams_map: PartStreamsMap::new(),
             rng: StdRng::seed_from_u64(seed_from_address(&address, std::process::id() as u64)),
+            engine_handle: PayloadBuilderHandle::new(tx),
         }
     }
 

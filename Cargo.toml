@@ -21,6 +21,8 @@ reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", branch
 reth-consensus= { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-consensus" }
 reth-ethereum = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-ethereum" }
 reth-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-primitives" }
+reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-ethereum-engine-primitives" }
+reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-payload-primitives" }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-execution-types" }
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-primitives-traits" }
 reth-node-core = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-node-core" }

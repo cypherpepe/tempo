@@ -39,6 +39,8 @@ reth-tracing.workspace = true
 reth-db.workspace = true
 reth-ethereum-forks.workspace = true
 reth.workspace = true
+reth-payload-primitives.workspace = true
+reth-ethereum-engine-primitives.workspace = true
 
 alloy-eips.workspace = true
 alloy-genesis.workspace = true
