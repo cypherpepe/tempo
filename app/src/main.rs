@@ -1,11 +1,10 @@
+use app::cli::{Cli, MalachiteChainSpecParser};
+use app::node::MalachiteNode;
+use app::state::{Config, Genesis, State};
 use clap::{Args, Parser};
-use library::cli::{Cli, MalachiteChainSpecParser};
 use library::context::MalachiteContext;
-use library::node::MalachiteNode;
+use library::types::Address;
 use reth::builder::NodeHandle;
-
-use library::state::{Address, Config, Genesis, State};
-use reth::payload::PayloadBuilderHandle;
 
 /// No Additional arguments
 #[derive(Debug, Clone, Copy, Default, Args)]
@@ -25,11 +24,11 @@ fn main() -> eyre::Result<()> {
 
         let malachite_node = MalachiteNode::new(state);
         let NodeHandle {
-            node ,
+            node,
             node_exit_future,
         } = builder.node(malachite_node).launch().await?;
 
-        let engine_handle = node.add_ons_handle.beacon_engine_handle;
+        let _engine_handle = node.add_ons_handle.beacon_engine_handle;
 
         node_exit_future.await
     })?;

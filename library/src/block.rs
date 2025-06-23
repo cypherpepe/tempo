@@ -1,6 +1,6 @@
 use alloy_consensus::Header;
 use reth_ethereum_primitives::BlockBody;
-use reth_primitives_traits::{Block, InMemorySize};
+use reth_primitives_traits::InMemorySize;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

@@ -7,6 +7,7 @@ use reth_primitives::{SealedBlock, SealedHeader};
 use std::sync::Arc;
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct MalachiteConsensus {
     chain_spec: Arc<ChainSpec>,
 }

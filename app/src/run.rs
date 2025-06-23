@@ -1,9 +1,15 @@
+use library::context::MalachiteContext;
+use library::height::Height;
+use crate::state::{State, reload_log_level, decode_value, encode_value};
 use eyre::eyre;
-use crate::context::MalachiteContext;
-use crate::state::State;
-
-// use malachitebft_app_channel::{AppMsg, Channels, ConsensusMsg, NetworkMsg, StreamContent};
-
+use malachitebft_app_channel::{AppMsg, Channels, ConsensusMsg, NetworkMsg};
+use malachitebft_app_channel::app::streaming::StreamContent;
+use malachitebft_app_channel::app::types::{ProposedValue, LocallyProposedValue};
+use malachitebft_app_channel::app::types::sync::RawDecidedValue;
+use malachitebft_core_types::{Round, Validity, Height as HeightTrait, Value as ValueTrait};
+use std::time::Duration;
+use tokio::time::sleep;
+use tracing::{info, error};
 
 pub async fn run(state: &mut State, channels: &mut Channels<MalachiteContext>) -> eyre::Result<()> {
     while let Some(msg) = channels.consensus.recv().await {
@@ -138,7 +144,7 @@ pub async fn run(state: &mut State, channels: &mut Channels<MalachiteContext>) -
             // consider and vote for or against it (ie. vote `nil`), depending on its validity.
             AppMsg::ReceivedProposalPart { from, part, reply } => {
                 let part_type = match &part.content {
-                    StreamContent::Data(part) => part.get_type(),
+                    StreamContent::Data(_part) => "data",
                     StreamContent::Fin => "end of stream",
                 };
 

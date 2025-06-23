@@ -1,19 +1,18 @@
 use tokio::sync::{broadcast, mpsc};
 use tracing::warn;
 
-use crate::consensus::MalachiteConsensusBuilder;
+use library::consensus::MalachiteConsensusBuilder;
 use crate::state::State;
 
 use reth::payload::{PayloadBuilderHandle, PayloadServiceCommand};
 use reth::transaction_pool::TransactionPool;
 use reth_chainspec::ChainSpec;
 use reth_node_builder::components::{BasicPayloadServiceBuilder, PayloadServiceBuilder};
-use reth_node_builder::{BuilderContext, BuiltPayload, ConfigureEvm};
+use reth_node_builder::{BuilderContext, ConfigureEvm};
 use reth_node_builder::{
     FullNodeTypes, Node, NodeComponentsBuilder, NodeTypes, components::ComponentsBuilder,
 };
 use reth_node_ethereum::node::{EthereumAddOns, EthereumNetworkBuilder, EthereumPoolBuilder};
-use reth_primitives::{Block as RethBlock, SealedBlock};
 use reth_trie_db::MerklePatriciaTrie;
 
 /// Type configuration for a regular Malachite node.

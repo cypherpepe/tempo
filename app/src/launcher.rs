@@ -32,7 +32,7 @@ where
 
     async fn launch_node(
         self,
-        target: NodeBuilderWithComponents<T, CB, AO>,
+        _target: NodeBuilderWithComponents<T, CB, AO>,
     ) -> eyre::Result<Self::Node> {
         // Use the standard launch implementation
         todo!()
