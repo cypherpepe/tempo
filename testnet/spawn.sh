@@ -24,8 +24,7 @@ CONSENSUS_PORT_BASE=26656
 METRICS_PORT_BASE=9000
 RETH_PORT_BASE=30303
 RETH_RPC_PORT_BASE=8545
-RETH_WS_PORT_BASE=8546
-ENGINE_RPC_PORT_BASE=8551
+AUTH_RPC_PORT_BASE=8551
 
 # Function to print colored output
 log() {
@@ -104,8 +103,6 @@ for ((i=0; i<$NUM_NODES; i++)); do
     METRICS_PORT=$((METRICS_PORT_BASE + i))
     RETH_PORT=$((RETH_PORT_BASE + i))
     RETH_RPC_PORT=$((RETH_RPC_PORT_BASE + i))
-    RETH_WS_PORT=$((RETH_WS_PORT_BASE + i))
-    ENGINE_RPC_PORT=$((ENGINE_RPC_PORT_BASE + i))
     
     # Generate peer list (all nodes except self)
     PEERS=""
@@ -156,15 +153,14 @@ for ((i=0; i<$NUM_NODES; i++)); do
     fi
     
     # Launch node in background
-    $BINARY node \
+    RUST_LOG="${RUST_LOG:-info}" $BINARY node \
         --datadir "$NODE_DIR/reth" \
-        --port $RETH_PORT \
+        --port $((RETH_PORT_BASE + i)) \
+        --discovery.port $((RETH_PORT_BASE + i)) \
         --http \
-        --http.port $RETH_RPC_PORT \
-        --ws \
-        --ws.port $RETH_WS_PORT \
-        --authrpc.port $ENGINE_RPC_PORT \
-        --metrics $METRICS_PORT \
+        --http.port $((RETH_RPC_PORT_BASE + i)) \
+        --authrpc.port $((AUTH_RPC_PORT_BASE + i)) \
+        --metrics $((METRICS_PORT_BASE + i)) \
         --log.file.directory "$NODE_DIR/logs" \
         --malachite-home "$NODE_DIR/malachite" \
         --consensus-config "$NODE_DIR/malachite/config/malachite.toml" \
