@@ -101,6 +101,44 @@ for i in $(seq 0 $((NUM_NODES - 1))); do
     fi
 done
 
+# Wait for RPC to be available
+log "Waiting for RPC endpoints to become available..."
+rpc_timeout=60  # 60 seconds to wait for RPC
+rpc_start_time=$(date +%s)
+all_rpc_ready=false
+
+while [ "$all_rpc_ready" = false ]; do
+    current_time=$(date +%s)
+    elapsed=$((current_time - rpc_start_time))
+    
+    if [ $elapsed -gt $rpc_timeout ]; then
+        error "RPC endpoints did not become available within $rpc_timeout seconds"
+        exit 1
+    fi
+    
+    ready_count=0
+    for i in $(seq 0 $((NUM_NODES - 1))); do
+        port=$((8545 + i))
+        # Test with eth_blockNumber - the same method we'll use later
+        response=$(curl -s -X POST http://127.0.0.1:$port \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' 2>/dev/null || echo "")
+        
+        if [ -n "$response" ] && echo "$response" | grep -q "result"; then
+            ready_count=$((ready_count + 1))
+            log "Node $i RPC responding on port $port"
+        fi
+    done
+    
+    if [ $ready_count -eq $NUM_NODES ]; then
+        all_rpc_ready=true
+        log "All $NUM_NODES RPC endpoints are ready"
+    else
+        log "RPC ready: $ready_count/$NUM_NODES nodes (waiting...)"
+        sleep 2
+    fi
+done
+
 # Monitor block progression
 log "Monitoring block progression (target: block $TARGET_BLOCK, timeout: ${TIMEOUT}s)..."
 start_time=$(date +%s)
