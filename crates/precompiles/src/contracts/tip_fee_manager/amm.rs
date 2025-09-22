@@ -11,8 +11,8 @@ use alloy::{
 use alloy_primitives::IntoLogData;
 
 /// Constants from the Solidity reference implementation
-pub const M: U256 = uint!(9975_U256);
-pub const SQRT_M: U256 = uint!(99874921_U256); // sqrt(0.9975) scaled by 100000
+pub const M: U256 = uint!(9970_U256); // m = 0.9970 (scaled by 10000)
+pub const N: U256 = uint!(9985_U256);
 pub const SCALE: U256 = uint!(10000_U256);
 pub const SQRT_SCALE: U256 = uint!(100000_U256);
 pub const MIN_LIQUIDITY: U256 = uint!(1000_U256);
@@ -178,14 +178,47 @@ impl<'a, S: StorageProvider> TIPFeeAMM<'a, S> {
         msg_sender: Address,
         user_token: Address,
         validator_token: Address,
-        amount_in: U256,
+        amount_out: U256,
         to: Address,
     ) -> Result<U256, TIPFeeAMMError> {
         let pool_id = self.get_pool_id(user_token, validator_token);
         let mut pool = self.get_pool(&pool_id);
-        let amount_out = self.execute_rebalance_swap(&pool_id, &mut pool, amount_in)?;
+
+        // Rebalancing swaps are always from validatorToken to userToken
+        // Calculate input and update reserves
+        let amount_in = (amount_out * N) / SCALE + U256::ONE;
+
+        let amount_in: u128 = amount_in
+            .try_into()
+            .map_err(|_| TIPFeeAMMError::invalid_amount())?;
+        let amount_out: u128 = amount_out
+            .try_into()
+            .map_err(|_| TIPFeeAMMError::invalid_amount())?;
+
+        pool.reserve_validator_token = pool
+            .reserve_validator_token
+            .checked_add(amount_in)
+            .ok_or(TIPFeeAMMError::insufficient_reserves())?;
+
+        pool.reserve_user_token = pool
+            .reserve_user_token
+            .checked_sub(amount_out)
+            .ok_or(TIPFeeAMMError::invalid_amount())?;
+
+        // Ensure rebalancing doesn't create invalid reserves where user token < validator token
+        // This prevents rebalancing in the wrong direction
+        if pool.reserve_user_token < pool.reserve_validator_token {
+            return Err(TIPFeeAMMError::invalid_new_reserves());
+        }
+
+        if !self.can_support_pending_swaps(&pool_id, U256::from(pool.reserve_validator_token)) {
+            return Err(TIPFeeAMMError::insufficient_liquidity_for_pending());
+        }
+        self.set_pool(&pool_id, &pool);
 
         let validator_token_id = address_to_token_id_unchecked(&validator_token);
+        let amount_in = U256::from(amount_in);
+        let amount_out = U256::from(amount_out);
         TIP20Token::new(validator_token_id, self.storage)
             .transfer_from(
                 &self.contract_address,
@@ -222,83 +255,7 @@ impl<'a, S: StorageProvider> TIPFeeAMM<'a, S> {
             )
             .map_err(|_| TIPFeeAMMError::internal_error())?;
 
-        Ok(amount_out)
-    }
-
-    /// Execute a rebalance swap and calculation reserve updates
-    fn execute_rebalance_swap(
-        &mut self,
-        pool_id: &B256,
-        pool: &mut Pool,
-        amount_in: U256,
-    ) -> Result<U256, TIPFeeAMMError> {
-        let x = U256::from(pool.reserve_user_token);
-        let y = U256::from(pool.reserve_validator_token);
-
-        let l = self.calculate_liquidity(x, y);
-
-        let new_y = y + amount_in;
-        let new_x = self.calculate_new_reserve(new_y, l)?;
-
-        if new_x >= x {
-            return Err(TIPFeeAMMError::invalid_swap_calculation());
-        }
-
-        let amount_out = x - new_x;
-
-        if !self.can_support_pending_swaps(pool_id, new_y) {
-            return Err(TIPFeeAMMError::insufficient_liquidity_for_pending());
-        }
-
-        pool.reserve_user_token = new_x.to::<u128>();
-        pool.reserve_validator_token = new_y.to::<u128>();
-        self.set_pool(pool_id, pool);
-
-        Ok(amount_out)
-    }
-
-    /// Calculate liquidity based on reserves
-    pub fn calculate_liquidity(&self, x: U256, y: U256) -> U256 {
-        //  L = (y + sqrt(m)*x + sqrt(y^2 + m*x^2 + (4-2*sqrt(m))*x*y)) / (2*(1-sqrt(m)))
-        let sqrt_m_x = (SQRT_M * x) / SQRT_SCALE;
-        let m_x2 = (M * x * x) / SCALE;
-        let y2 = y * y;
-
-        let coefficient = uint!(4_U256) * SQRT_SCALE - uint!(2_U256) * SQRT_M;
-        let coeff_xy = (coefficient * x * y) / SQRT_SCALE;
-        let under_sqrt = y2 + m_x2 + coeff_xy;
-
-        let sqrt_term = sqrt(under_sqrt);
-        let numerator = y + sqrt_m_x + sqrt_term;
-        let denominator = uint!(2_U256) * (SQRT_SCALE - SQRT_M);
-
-        (numerator * SQRT_SCALE) / denominator
-    }
-
-    /// Calculate new reserve after a fee token swap
-    pub fn calculate_new_reserve(
-        &self,
-        known_validator_reserve: U256,
-        l: U256,
-    ) -> Result<U256, TIPFeeAMMError> {
-        // From the invariant: (x + L)(y + L*sqrt(m)) = L^2
-        // For rebalancing swaps (validatorToken → userToken), we know new y, solve for new x:
-        // x = L^2 / (y + L*sqrt(m)) - L
-
-        let l_sqrt_m = (l * SQRT_M) / SQRT_SCALE;
-        let l2 = l * l;
-        let denominator = known_validator_reserve + l_sqrt_m;
-
-        if denominator.is_zero() {
-            return Err(TIPFeeAMMError::division_by_zero());
-        }
-
-        let result = l2 / denominator;
-        if result <= l {
-            return Err(TIPFeeAMMError::invalid_new_reserves());
-        }
-
-        Ok(result - l)
+        Ok(amount_in)
     }
 
     /// Mint LP tokens for a given pool
@@ -372,9 +329,23 @@ impl<'a, S: StorageProvider> TIPFeeAMM<'a, S> {
             )
             .map_err(|_| TIPFeeAMMError::token_transfer_failed())?;
 
-        // Update reserves
-        pool.reserve_user_token += amount_user_token.to::<u128>();
-        pool.reserve_validator_token += amount_validator_token.to::<u128>();
+        // Update reserves with overflow checks
+        let user_amount: u128 = amount_user_token
+            .try_into()
+            .map_err(|_| TIPFeeAMMError::invalid_amount())?;
+        let validator_amount: u128 = amount_validator_token
+            .try_into()
+            .map_err(|_| TIPFeeAMMError::invalid_amount())?;
+
+        pool.reserve_user_token = pool
+            .reserve_user_token
+            .checked_add(user_amount)
+            .ok_or(TIPFeeAMMError::invalid_amount())?;
+
+        pool.reserve_validator_token = pool
+            .reserve_validator_token
+            .checked_add(validator_amount)
+            .ok_or(TIPFeeAMMError::invalid_amount())?;
         self.set_pool(&pool_id, &pool);
 
         // Mint LP tokens
@@ -432,9 +403,22 @@ impl<'a, S: StorageProvider> TIPFeeAMM<'a, S> {
         let total_supply = self.get_total_supply(&pool_id);
         self.set_total_supply(&pool_id, total_supply - liquidity);
 
-        // Update reserves
-        pool.reserve_user_token -= amount_user_token.to::<u128>();
-        pool.reserve_validator_token -= amount_validator_token.to::<u128>();
+        // Update reserves with underflow checks
+        let user_amount: u128 = amount_user_token
+            .try_into()
+            .map_err(|_| TIPFeeAMMError::invalid_amount())?;
+        let validator_amount: u128 = amount_validator_token
+            .try_into()
+            .map_err(|_| TIPFeeAMMError::invalid_amount())?;
+
+        pool.reserve_user_token = pool
+            .reserve_user_token
+            .checked_sub(user_amount)
+            .ok_or(TIPFeeAMMError::insufficient_reserves())?;
+        pool.reserve_validator_token = pool
+            .reserve_validator_token
+            .checked_sub(validator_amount)
+            .ok_or(TIPFeeAMMError::insufficient_reserves())?;
         self.set_pool(&pool_id, &pool);
 
         // Transfer tokens to user
@@ -523,10 +507,16 @@ impl<'a, S: StorageProvider> TIPFeeAMM<'a, S> {
         let amount_in = self.get_pending_fee_swap_in(&pool_id);
         let pending_out = (amount_in * M) / SCALE;
 
-        // TODO: use checked math for these operations
-        pool.reserve_user_token = (U256::from(pool.reserve_user_token) + amount_in).to::<u128>();
-        pool.reserve_validator_token =
-            (U256::from(pool.reserve_validator_token) - pending_out).to::<u128>();
+        // Use checked math for these operations
+        let new_user_reserve = U256::from(pool.reserve_user_token) + amount_in;
+        let new_validator_reserve = U256::from(pool.reserve_validator_token) - pending_out;
+
+        pool.reserve_user_token = new_user_reserve
+            .try_into()
+            .map_err(|_| TIPFeeAMMError::invalid_amount())?;
+        pool.reserve_validator_token = new_validator_reserve
+            .try_into()
+            .map_err(|_| TIPFeeAMMError::invalid_amount())?;
 
         self.set_pool(&pool_id, &pool);
         self.set_pending_fee_swap_in(&pool_id, U256::ZERO);
@@ -741,10 +731,7 @@ mod tests {
         );
 
         // Verify the expected output calculation
-        assert_eq!(
-            expected_out,
-            amount_in * uint!(9975_U256) / uint!(10000_U256)
-        );
+        assert_eq!(expected_out, amount_in * M / SCALE);
 
         Ok(())
     }
@@ -803,7 +790,7 @@ mod tests {
         let expected_out = (amount_in * M) / SCALE;
 
         // Execute pending swaps and verify reserves
-        let actual_out = amm.execute_pending_fee_swaps(user_token, validator_token);
+        let actual_out = amm.execute_pending_fee_swaps(user_token, validator_token)?;
         assert_eq!(actual_out, expected_out, "Output should match expected");
 
         // Check reserves updated correctly
@@ -851,7 +838,7 @@ mod tests {
         assert_eq!(amm.get_pending_fee_swap_in(&pool_id), total_pending);
 
         // Execute all pending swaps
-        let total_out = amm.execute_pending_fee_swaps(user_token, validator_token);
+        let total_out = amm.execute_pending_fee_swaps(user_token, validator_token)?;
         let expected_total_out = (total_pending * M) / SCALE;
         assert_eq!(total_out, expected_total_out);
 
@@ -876,7 +863,7 @@ mod tests {
     /// Corresponds to disabled_testRebalanceSwapTowardBalance in StableAMM.t.sol
     #[test]
     #[ignore = "Overflow in calculateLiquidity when called during rebalanceSwap (same as Solidity disabled test)"]
-    fn test_rebalance_swap_toward_balance() -> Result<(), TIPFeeAMMError> {
+    fn test_rebalance_swap() -> Result<(), TIPFeeAMMError> {
         let (mut amm, _, user_token, validator_token) = setup_test_amm();
 
         // Add balanced liquidity first (using same decimals as Solidity test)
@@ -892,7 +879,7 @@ mod tests {
         // Make the pool imbalanced by executing a fee swap
         let user_token_in = uint!(20000_U256) * uint!(10_U256).pow(U256::from(6)); // 20000 * 1e6
         amm.fee_swap(user_token, validator_token, user_token_in)?;
-        amm.execute_pending_fee_swaps(user_token, validator_token);
+        amm.execute_pending_fee_swaps(user_token, validator_token)?;
 
         let pool_before = amm.get_pool(&pool_id);
         let x_before = U256::from(pool_before.reserve_user_token);
@@ -900,25 +887,31 @@ mod tests {
 
         // Execute rebalancing swap using the actual function
         let swap_amount = uint!(1000_U256) * uint!(10_U256).pow(U256::from(6)); // 1000 * 1e6
-        let mut pool = pool_before;
-        let amount_out = amm.execute_rebalance_swap(&pool_id, &mut pool, swap_amount)?;
+        let msg_sender = Address::random();
+        let to = Address::random();
+        let amount_in =
+            amm.rebalance_swap(msg_sender, user_token, validator_token, swap_amount, to)?;
 
-        // Verify the swap output
-        assert!(amount_out > 0, "Should receive user tokens");
+        // Verify the swap input
+        assert!(amount_in > 0, "Should provide validator tokens");
 
-        // Verify reserves were updated correctly
-        let x_after = U256::from(pool.reserve_user_token);
-        let y_after = U256::from(pool.reserve_validator_token);
+        // Get updated pool state
+        let pool_after = amm.get_pool(&pool_id);
+        let x_after = U256::from(pool_after.reserve_user_token);
+        let y_after = U256::from(pool_after.reserve_validator_token);
+
+        // For rebalance swap: validator tokens go in, user tokens come out
         assert!(x_after < x_before, "User token reserve should decrease");
-        assert_eq!(
-            y_after,
-            y_before + swap_amount,
-            "Validator token reserve should increase by swap amount"
+        assert!(
+            y_after > y_before,
+            "Validator token reserve should increase"
         );
+
+        // The amount_in returned is the validator tokens provided
         assert_eq!(
-            x_before - x_after,
-            amount_out,
-            "Amount out should equal decrease in user reserve"
+            y_after - y_before,
+            amount_in,
+            "Amount in should equal increase in validator reserve"
         );
 
         // Verify the swap reduces imbalance
@@ -940,9 +933,9 @@ mod tests {
         Ok(())
     }
 
-    /// Test rebalance swap in wrong direction
+    /// Test rebalance swap invalid new balance
     #[test]
-    fn test_rebalance_swap_wrong_direction() {
+    fn test_rebalance_swap_invalid_new_balance() {
         let (mut amm, _, user_token, validator_token) = setup_test_amm();
 
         // Setup balanced pool
@@ -956,24 +949,15 @@ mod tests {
         );
 
         let pool = amm.get_pool(&pool_id);
-        assert_eq!(
-            pool.reserve_user_token, pool.reserve_validator_token,
-            "Pool should be balanced initially"
-        );
+        assert_eq!(pool.reserve_user_token, pool.reserve_validator_token,);
 
-        // Try to rebalance a balanced pool - this should fail
-        // because it would increase imbalance rather than reduce it
+        // Try to rebalance where the user token balance < validator token balance
         let swap_amount = uint!(1000_U256) * uint!(10_U256).pow(U256::from(6));
-        let mut pool_copy = pool;
+        let msg_sender = Address::random();
+        let to = Address::random();
 
-        let result = amm.execute_rebalance_swap(&pool_id, &mut pool_copy, swap_amount);
-
-        // The swap should fail when trying to rebalance an already balanced pool
-        // This fails during calculate_new_reserve with InvalidNewReserves
-        assert!(
-            matches!(result, Err(TIPFeeAMMError::InvalidNewReserves(_))),
-            "Rebalancing a balanced pool should fail with InvalidNewReserves"
-        );
+        let result = amm.rebalance_swap(msg_sender, user_token, validator_token, swap_amount, to);
+        assert!(matches!(result, Err(TIPFeeAMMError::InvalidNewReserves(_))),);
     }
 
     /// Test has_liquidity function
@@ -998,45 +982,5 @@ mod tests {
             !amm.has_liquidity(user_token, validator_token, too_much),
             "Should not have liquidity for 101 tokens"
         );
-    }
-
-    /// Test liquidity calculation
-    /// Corresponds to testLiquidityCalculation in StableAMM.t.sol (commented out due to overflow)
-    #[test]
-    #[ignore = "Overflow in calculate_liquidity: x*x and coefficient*x*y overflow for normal token amounts (same issue in Solidity)"]
-    fn test_calculate_liquidity() {
-        let (amm, _, _, _) = setup_test_amm();
-
-        let x = uint!(1500_U256) * uint!(10_U256).pow(U256::from(6)); // 1500 * 1e6
-        let y = uint!(500_U256) * uint!(10_U256).pow(U256::from(6)); // 500 * 1e6
-        let l = amm.calculate_liquidity(x, y);
-        assert!(l > 0, "Liquidity should be positive");
-        assert!(l > y, "Liquidity should be greater than smaller reserve");
-    }
-
-    /// Test calculate_new_reserve
-    #[test]
-    #[ignore = "InvalidNewReserves error due to liquidity calculation constraints with these values"]
-    fn test_calculate_new_reserve() -> Result<(), TIPFeeAMMError> {
-        let (amm, _, _, _) = setup_test_amm();
-
-        // Setup a known liquidity value (smaller to avoid overflow)
-        let l = uint!(1000_U256) * uint!(10_U256).pow(U256::from(6)); // 1000 * 1e6
-        let known_y = uint!(800_U256) * uint!(10_U256).pow(U256::from(6)); // 800 * 1e6
-
-        // Calculate new x
-        let new_x = amm.calculate_new_reserve(known_y, l)?;
-        assert!(new_x > 0, "New reserve should be positive");
-
-        // Test error handling with extreme values
-        // When y is much larger than liquidity, calculate_new_reserve should fail
-        let large_y = uint!(1_000_000_U256) * uint!(10_U256).pow(U256::from(6));
-        let extreme_result = amm.calculate_new_reserve(large_y, l);
-        assert!(
-            matches!(extreme_result, Err(TIPFeeAMMError::InvalidNewReserves(_))),
-            "Should fail with InvalidNewReserves for extreme values where y > l"
-        );
-
-        Ok(())
     }
 }
